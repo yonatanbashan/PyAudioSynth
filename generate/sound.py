@@ -1,3 +1,4 @@
+import pyaudio
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io.wavfile as wav
@@ -60,3 +61,16 @@ def mix_waveforms(osc_list, amp_list):
         new_osc = new_osc + osc
 
     return new_osc
+
+def create_stream(sound_format, rate, output):
+
+    # Transmit audio
+    PyAudio = pyaudio.PyAudio
+    p = PyAudio()
+    stream = p.open(format=sound_format,
+                    channels=1,
+                    rate=rate,
+                    output=output,
+                    )
+
+    return stream

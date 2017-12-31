@@ -10,7 +10,7 @@ import copy
 
 print ("Mysynth!")
 
-PyAudio = pyaudio.PyAudio     #initialize pyaudio
+
 
 bitRate = 48000.0     #number of frames per second/frameset.
 freq = 530     #Hz, waves per second, 261.63=C4-note.
@@ -20,15 +20,9 @@ if freq > bitRate:
     bitRate = freq+100
 
 numFrames = int(bitRate * length * 2)
+rate = int(bitRate)
 
-
-# Transmit audio
-p = PyAudio()
-stream = p.open(format=pyaudio.paFloat32,
-                channels=1,
-                rate=int(bitRate),
-                output=True,
-                )
+stream = sd.create_stream(pyaudio.paFloat32, rate, True)
 
 
 fm1_amp = 0.02
