@@ -2,47 +2,93 @@ import pyaudio
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io.wavfile as wav
+import sounddevice as device
 
-class AudioWriter:
+# An interface to write data to a file and play
+class AudioDataInterface:
 
-    stream = None
+    play_method = 'live'
     filedata = None
 
-    def __init__(self, stream):
-        self.stream = stream
+    def __init__(self, bit_rate, play_method = 'live'):
+        self.bit_rate = bit_rate
+        self.play_method = play_method
         self.filedata = np.zeros(1)
+        device.default.latency = ('low', 'low')
+        device.default.dtype = ('float32', 'float32')
 
-    def play_audio(self, data, debug = False):
-        stream_data = prepare_audio(data, debug)
-        self.stream.write(stream_data)
+    # Appends sound to the output, and plays it if in play_method=='live'
+    def append_sound(self, data, debug = False):
+
+        data = prepare_audio(data, debug=debug)
+
         if self.filedata is None:
             self.filedata = data
         else:
+
             self.filedata = np.append(self.filedata, data)
 
-    def write_file(self, file, bit_rate):
+        if self.play_method == 'live':
+            self.device_play(data, debug=debug)
+
+
+    # Plays all audio to date and writes data to specified file
+    def flush_audio(self, bit_rate, file = None, debug = False):
+
+        if self.play_method == 'flush':
+            self.device_play(self.filedata, debug=debug)
+
+        if file:
+            self.write_file(file, bit_rate, debug)
+
+    # Writes accumulated data to a file
+    def write_file(self, file, bit_rate, debug = False):
+
         write_data = self.filedata.astype(np.float32)
         wav.write(file, bit_rate, write_data)
+
+        if debug:
+            plt.figure()
+            plt.plot(write_data)
+            plt.title("data to wav file")
+            plt.show()
+
+    # Plays data using audio interface
+    def device_play(self, data, debug=False):
+        device.play(data, self.bit_rate)
+        device.wait()
+
+        if debug:
+            plt.figure()
+            plt.plot(data)
+            plt.title("device_play output")
+            plt.show()
+
 
 
 
 # Prepare data for pyAudio required format. Input is a waveform list/array
-def prepare_audio(data, debug = False):
+def prepare_audio(data, dtype=np.float32, debug = False):
 
-    att_size = 500
+    # Create attack (in and out)
+    att_size = 500 # TODO: Need to de-hardcode this
     att_in = np.linspace(0, 1, num=att_size)
     att_out = np.linspace(1, 0, num=att_size)
-
-
     data[0:att_size] = data[0:att_size] * att_in
     data[-att_size:] = data[-att_size:] * att_out
 
+    # Convert data to desired dtype
+    if dtype == np.int16:
+        output = data.astype(np.int16)
+    elif dtype == np.float32:
+        output = data.astype(np.float32)
+
     if debug:
         plt.figure()
-        plt.plot(data[-1000:])
+        plt.plot(data)
+        plt.title("prepare_audio output")
         plt.show()
 
-    output = data.astype(np.float32)
     return output
 
 
@@ -62,16 +108,3 @@ def mix_waveforms(osc_list, amp_list):
         new_osc = new_osc + osc
 
     return new_osc
-
-def create_stream(sound_format, rate, output):
-
-    # Transmit audio
-    PyAudio = pyaudio.PyAudio
-    p = PyAudio()
-    stream = p.open(format=sound_format,
-                    channels=1,
-                    rate=rate,
-                    output=output,
-                    )
-
-    return stream

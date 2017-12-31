@@ -1,12 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 class Modulation:
-    amp = 1.0
-    freq = 0.0
-    type = "sin"
-    phase = 0.0
-    debug = False
 
     def __init__(self, amp, freq, t = "sin", phase = 0.0, debug = False):
         self.amp = amp
@@ -16,16 +12,6 @@ class Modulation:
         self.debug = debug
 
 class SoundObject:
-
-    type = "sin"
-    freq = 500.0
-    phase = 0.0
-    fm = None
-    am = None
-    has_fm = False
-    has_am = False
-    has_env = False
-    env = None
 
     def __init__(self, t, freq, phase = 0.0, fm = None, am = None, has_fm = False, has_am = False, has_env = False, env = None):
         self.type = t
@@ -45,13 +31,6 @@ class SoundObject:
         self.fm = fm
 
 class Envelope:
-
-    attack = 0.0
-    decay = 0.0
-    level1 = 1.0
-    level2 = 1.0
-    sustain = 0.0
-    debug = False
 
     def __init__(self, attack = 0.0, decay = 0.0, level1 = 1.0, level2 = 1.0, sustain = 0.0, debug = False):
         self.attack = attack
@@ -79,30 +58,31 @@ def create_mod_wave(dc, mod : Modulation, length, bit_rate):
 
     return data
 
+# Creates envelope wave
 def create_env_wave(env : Envelope, length, bit_rate):
 
-    attack = env.attack
-    decay = env.decay
-    level1 = env.level1
-    level2 = env.level2
-    sustain = env.sustain
+    # Initialize values
+    attack = int(env.attack * bit_rate)
+    decay = env.decay * bit_rate
+    sustain = int(env.sustain * bit_rate)
 
-    attack = int(attack * bit_rate)
-    decay = decay * bit_rate
-    sustain = int(sustain * bit_rate)
-
+    # Attack part
     data = np.zeros(length)
-    data[0:attack] = np.linspace(0, level1, num=attack)
-    data[attack:attack+sustain] = level1
-    decay_part = np.arange(length-attack-sustain) * (-1) / decay
-    data[attack+sustain:] = level2 + (level1-level2)*np.exp(decay_part)
+    data[0:attack] = np.linspace(0, env.level1, num=attack)
+
+    # Sustain part
+    data[attack:attack+sustain] = env.level1
+
+    # Decay part
+    decay_part = np.arange(length - attack - sustain) * (-1) / decay
+    data[attack+sustain:] = env.level2 + (env.level1 - env.level2) * np.exp(decay_part)
+
     if env.debug:
         plt.figure()
         plt.plot(data)
         plt.show()
-
-
     return data
+
 
 # Creates a square base wave
 def create_square_wave(f, length, bit_rate, phase = 0.0):
@@ -110,21 +90,26 @@ def create_square_wave(f, length, bit_rate, phase = 0.0):
     data = np.sign(data)
     return data
 
+
 # Creates a sin base wave
 def create_sin_wave(f, length, bit_rate, phase = 0.0, f_carrier = 0.0):
 
     # Create wave with or without FM
     if type(f) is Modulation:
-        mod_sine = np.sin( 2.0 * np.pi * f.freq * np.arange(length) / bit_rate)
-        freq_wave = 2.0 * np.pi * f_carrier + f_carrier * f.amp * mod_sine
+        if f.type == "sin":
+            mod_wave = np.sin( 2.0 * np.pi * f.freq * np.arange(length) / bit_rate)
+        if f.type == "square":
+            mod_wave = create_square_wave(f.freq, length, bit_rate, f.phase)
+        freq_wave = 2.0 * np.pi * f_carrier + f_carrier * f.amp * mod_wave
         data = np.sin( np.multiply(freq_wave, np.arange(length)) / bit_rate + phase   )
     else:
         data = np.sin(2.0 * np.pi * np.arange(length) * f / bit_rate + phase)
 
     return data
 
+
 # Generates a buffer for a sin wave
-def create_sound(sobj: SoundObject, length, bit_rate):
+def create_sound(sobj: SoundObject, length, bit_rate, debug = False):
 
     f = sobj.freq
     phase = sobj.phase
@@ -155,5 +140,9 @@ def create_sound(sobj: SoundObject, length, bit_rate):
             mod_wave /= max_amp
         data *= mod_wave
 
+    if debug:
+        plt.figure()
+        plt.plot(data)
+        plt.show()
 
     return data
