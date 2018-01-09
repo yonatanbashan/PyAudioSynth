@@ -4,6 +4,12 @@ import matplotlib.pyplot as plt
 import scipy.io.wavfile as wav
 import sounddevice as device
 
+
+def callback(indata, outdata, frames, time, status):
+    if status:
+        print(status)
+    outdata[:] = indata
+
 # An interface to write data to a file and play
 class AudioDataInterface:
 
@@ -53,10 +59,20 @@ class AudioDataInterface:
             plt.title("data to wav file")
             plt.show()
 
+
+
+
+
     # Plays data using audio interface
     def device_play(self, data, debug=False):
-        device.play(data, self.bit_rate)
         device.wait()
+        device.play(data, self.bit_rate)
+
+        #(length,) = np.shape(data)
+        #length = length / self.bit_rate
+
+        #stream =  device.RawOutputStream(channels=2, dtype='float32', callback=callback)
+        #stream.write(data.data)
 
         if debug:
             plt.figure()
@@ -82,14 +98,18 @@ def prepare_audio(data, dtype=np.float32, debug = False):
         output = data.astype(np.int16)
     elif dtype == np.float32:
         output = data.astype(np.float32)
+    else:
+        output = data.astype(dtype)
 
     if debug:
         plt.figure()
-        plt.plot(data)
+        plt.plot(output)
         plt.title("prepare_audio output")
         plt.show()
 
     return output
+
+
 
 
 # Concatenates waveforms
@@ -108,3 +128,48 @@ def mix_waveforms(osc_list, amp_list):
         new_osc = new_osc + osc
 
     return new_osc
+
+
+# An attempt to play buffered data
+def play_buffered(data, bit_rate):
+
+
+    # instantiate PyAudio (1)
+    p = pyaudio.PyAudio()
+    blocksize = 4096*2
+
+    start = 0
+
+    (length,) = np.shape(data)
+
+    # define callback (2)
+    def callback(in_data, frame_count, time_info, status):
+        nonlocal start
+        nonlocal length
+
+        if start+blocksize-1 > length - 1:
+            end = length - 1
+        else:
+            end = start+blocksize-1
+
+        #print(start)
+        #print(end)
+
+        dataout = data[start:end]
+        start = start + blocksize
+        return dataout, pyaudio.paContinue
+
+
+
+    # open stream using callback (3)
+    stream = p.open(format=pyaudio.paFloat32,
+                    channels=1,
+                    rate=int(bit_rate),
+                    output=True,
+                    frames_per_buffer=4096,
+                    stream_callback=callback)
+
+    # start the stream (4)
+    stream.start_stream()
+
+
