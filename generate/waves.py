@@ -1,21 +1,22 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
+import music
+import generate.sound as sd
+import itertools
 
 class Modulation:
 
-    def __init__(self, amp, freq, t = "sin", phase = 0.0, debug = False):
+    def __init__(self, amp, mod_ratio, t = "sin", phase = 0.0, debug = False):
         self.amp = amp
-        self.freq = freq
+        self.mod_ratio = mod_ratio
         self.type = t
         self.phase = phase
         self.debug = debug
 
 class SoundObject:
 
-    def __init__(self, t, freq, phase = 0.0, fm = None, am = None, has_fm = False, has_am = False, has_env = False, env = None):
+    def __init__(self, t, phase = 0.0, fm = None, am = None, has_fm = False, has_am = False, has_env = False, env = None):
         self.type = t
-        self.freq = freq
         self.phase = phase
         self.fm = fm
         self.am = am
@@ -23,9 +24,6 @@ class SoundObject:
         self.has_am = has_am
         self.has_env = has_env
         self.env = env
-
-    def set_freq(self, freq):
-        self.freq = freq
 
     def set_fm(self, fm):
         self.fm = fm
@@ -41,13 +39,66 @@ class Envelope:
         self.debug = debug
 
 
+class Channel:
+    def __init__(self, sobj : SoundObject, bit_rate):
+        self.sobj = sobj
+        self.bit_rate = bit_rate
+        self.data = np.zeros(1)
+
+    # Add a note or notes to the channel
+    def add_notes(self, length, notes, amps = []):
+        frames = int(self.bit_rate * length)
+        if type(notes) == list:
+
+            # Sanity check
+            if len(amps) != len(notes):
+                print("Error: must provide amp list the same size of note list!")
+                exit(1)
+
+            oscs = []
+            for note in notes:
+                new_sound = create_sound(self.sobj, music.notes.get_note(note), frames, self.bit_rate)
+                new_sound = sd.smooth_audio(new_sound)
+                oscs.append(new_sound)
+                if not amps:
+                    amps.append(1)
+
+            new_data = sd.mix_waveforms(osc_list= oscs, amp_list = amps)
+        else:
+            new_sound = create_sound(self.sobj, music.notes.get_note(notes), frames, self.bit_rate)
+            new_sound = sd.smooth_audio(new_sound)
+            new_data = sd.mix_waveforms(osc_list = [new_sound], amp_list = [1])
+
+        self.data = np.append(self.data, new_data)
+
+    def multiply(self, num = 2):
+        new_data = self.data
+        for i in range(num - 1):
+            self.data = np.append(self.data, new_data)
+
+
+
+
+    def get_data(self):
+        return self.data
+
+
+
+
+
+
+
+
+
 # Creates a wave for modulation (AM or FM)
-def create_mod_wave(dc, mod : Modulation, length, bit_rate):
+def create_mod_wave(dc, base_freq, mod : Modulation, length, bit_rate):
+
+    freq = base_freq * mod.mod_ratio
 
     if mod.type == "sin":
-        mod_wave = create_sin_wave(mod.freq, length, bit_rate, mod.phase)
+        mod_wave = create_sin_wave(freq, length, bit_rate, mod.phase)
     elif mod.type == "square":
-        mod_wave = create_square_wave(mod.freq, length, bit_rate, mod.phase)
+        mod_wave = create_square_wave(freq, length, bit_rate, mod.phase)
 
     data = mod_wave * dc * mod.amp + dc
 
@@ -85,8 +136,8 @@ def create_env_wave(env : Envelope, length, bit_rate):
 
 
 # Creates a square base wave
-def create_square_wave(f, length, bit_rate, phase = 0.0):
-    data = create_sin_wave(f, length, bit_rate, phase)
+def create_square_wave(f, length, bit_rate, phase = 0.0, freq = 0.0):
+    data = create_sin_wave(f, length, bit_rate, phase, freq)
     data = np.sign(data)
     return data
 
@@ -96,10 +147,11 @@ def create_sin_wave(f, length, bit_rate, phase = 0.0, f_carrier = 0.0):
 
     # Create wave with or without FM
     if type(f) is Modulation:
+        freq = f.mod_ratio * f_carrier
         if f.type == "sin":
-            mod_wave = np.sin( 2.0 * np.pi * f.freq * np.arange(length) / bit_rate)
+            mod_wave = np.sin( 2.0 * np.pi * freq * np.arange(length) / bit_rate)
         if f.type == "square":
-            mod_wave = create_square_wave(f.freq, length, bit_rate, f.phase)
+            mod_wave = create_square_wave(freq, length, bit_rate, f.phase)
         freq_wave = 2.0 * np.pi * f_carrier + f_carrier * f.amp * mod_wave
         data = np.sin( np.multiply(freq_wave, np.arange(length)) / bit_rate + phase   )
     else:
@@ -109,21 +161,22 @@ def create_sin_wave(f, length, bit_rate, phase = 0.0, f_carrier = 0.0):
 
 
 # Generates a buffer for a sin wave
-def create_sound(sobj: SoundObject, length, bit_rate, debug = False):
+def create_sound(sobj: SoundObject, freq, length, bit_rate, debug = False):
 
-    f = sobj.freq
     phase = sobj.phase
     stype = sobj.type
 
     # Replace freq with FM if applied
     if sobj.has_fm:
-        f = sobj.fm
+        fm_freq = sobj.fm
+    else:
+        fm_freq = freq
 
     # Create wave
     if stype == "sin":
-        data = create_sin_wave(f, length, bit_rate, phase, sobj.freq)
+        data = create_sin_wave(fm_freq, length, bit_rate, phase, freq)
     elif stype == "square":
-        data = create_square_wave(f, length, bit_rate, phase)
+        data = create_square_wave(fm_freq, length, bit_rate, phase, freq)
 
     # Create envelope, if exists
     if sobj.has_env:
@@ -134,7 +187,7 @@ def create_sound(sobj: SoundObject, length, bit_rate, debug = False):
     # Implement AM, if exists
     if sobj.has_am:
         am = sobj.am
-        mod_wave = create_mod_wave(1, am, length, bit_rate)
+        mod_wave = create_mod_wave(dc = 1, base_freq = freq, mod = am, length = length, bit_rate = bit_rate)
         max_amp = np.amax(mod_wave)
         if max_amp > 1:
             mod_wave /= max_amp

@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import scipy.io.wavfile as wav
 import sounddevice as device
 
-
 def callback(indata, outdata, frames, time, status):
     if status:
         print(status)
@@ -81,10 +80,8 @@ class AudioDataInterface:
             plt.show()
 
 
-
-
-# Prepare data for pyAudio required format. Input is a waveform list/array
-def prepare_audio(data, dtype=np.float32, debug = False):
+# Add attack at start and end to avoid click sounds between notes
+def smooth_audio(data):
 
     # Create attack (in and out)
     att_size = 500 # TODO: Need to de-hardcode this
@@ -92,6 +89,15 @@ def prepare_audio(data, dtype=np.float32, debug = False):
     att_out = np.linspace(1, 0, num=att_size)
     data[0:att_size] = data[0:att_size] * att_in
     data[-att_size:] = data[-att_size:] * att_out
+
+    return data
+
+
+# Prepare data for pyAudio required format. Input is a waveform list/array
+def prepare_audio(data, dtype=np.float32, debug = False):
+
+    # Need to smooth first
+    data = smooth_audio(data)
 
     # Convert data to desired dtype
     if dtype == np.int16:
@@ -123,7 +129,18 @@ def mix_waveforms(osc_list, amp_list):
         osc_list[i] = osc_list[i] * amp
 
     # creating new osc by summarizing
-    new_osc = np.zeros(len(osc_list[1]))
+    max_len = 0
+    for l in osc_list:
+        if len(l) > max_len:
+            max_len = len(l)
+
+    for i, osc in enumerate(osc_list):
+        if len(osc) < max_len:
+            missing_length = max_len - len(osc)
+            padding = np.zeros(missing_length)
+            osc_list[i] = np.append(osc, padding)
+
+    new_osc = np.zeros(max_len)
     for osc in osc_list:
         new_osc = new_osc + osc
 
