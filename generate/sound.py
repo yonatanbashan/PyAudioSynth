@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io.wavfile as wav
 import sounddevice as device
+import threading
 
 def callback(indata, outdata, frames, time, status):
     if status:
@@ -122,7 +123,13 @@ def prepare_audio(data, dtype=np.float32, debug = False):
 # osc_list: list of numpy arrays with waveforms.
 # amp_list: list of relative amplitudes
 def mix_waveforms(osc_list, amp_list):
-    amp_list = amp_list / np.sum(amp_list)
+
+    ampsum = np.sum(amp_list)
+
+    if ampsum > 0:
+        amp_list = amp_list / ampsum
+    else:
+        amp_list = np.zeros(len(osc_list))
 
     # Multiplying oscs in the amps
     for i, amp in enumerate(amp_list):
@@ -145,6 +152,21 @@ def mix_waveforms(osc_list, amp_list):
         new_osc = new_osc + osc
 
     return new_osc
+
+
+# Sends each channel to a different thread for audio generation
+def generate_channels(channels):
+
+    thread_pool = []
+    for ch in channels:
+        new_thread = threading.Thread(target=ch.generate_sound(), args=())
+        thread_pool.append(new_thread)
+
+    for thread in thread_pool:
+        thread.start()
+
+    for thread in thread_pool:
+        thread.join()
 
 
 # An attempt to play buffered data

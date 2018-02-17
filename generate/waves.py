@@ -1,16 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import music
+import math
 from scipy import signal
 import generate.sound as sd
-import itertools
-
+import threading
+from scipy.fftpack import rfft, irfft, fftfreq
 
 # Defines a sequence of notes with lengths and amps
 class NoteSheet:
 
     def __init__(self):
         self.notes = []
+        self.length = 0
 
     def add_notes(self, length, notes, amps = []):
         if notes is list:
@@ -20,12 +22,14 @@ class NoteSheet:
             if not amps:
                 amps = [1]
 
+        self.length += length
         self.notes.append((length, notes, amps))
 
     def get_notes(self):
         return self.notes
 
-
+    def get_length(self):
+        return self.length
 
 class Modulation:
 
@@ -67,11 +71,19 @@ class SoundObject:
         if self.has_fm and self.type != 'sin':
             raise Exception('FM modulation is only available for sin waves')
 
-
-
-
     def set_fm(self, fm):
         self.fm = fm
+
+class AudioData:
+
+    def __init__(self, data = []):
+        self.data = data
+
+    def set_data(self, data):
+        self.data = data
+
+    def get_data(self):
+        return self.data
 
 class Envelope:
 
@@ -103,13 +115,29 @@ class Channel:
     def generate_sound(self):
         self.data = np.zeros(1)
         note_list = self.sheet.get_notes()
-        for note_tuple in note_list:
+        thread_pool = []
+        target_audio_arr = []
+        for i, note_tuple in enumerate(note_list):
             length = note_tuple[0]
             notes = note_tuple[1]
             if notes is list:
                 notes = notes[0]
             amps = note_tuple[2]
-            self.add_notes(length, notes, amps)
+            audio = AudioData()
+            target_audio_arr.append(audio)
+            new_thread = threading.Thread(target=self.add_notes, args=(length, notes, amps, target_audio_arr[i], True))
+            thread_pool.append(new_thread)
+            #self.add_notes(length, notes, amps)
+
+        for thread in thread_pool:
+            thread.start()
+
+        for thread in thread_pool:
+            thread.join()
+
+        for i, note in enumerate(note_list):
+            self.data = np.append(self.data, target_audio_arr[i].get_data())
+
 
 
     # Generates the audio for a note
@@ -122,11 +150,25 @@ class Channel:
 
         return new_sound;
 
+    def add_silence(self, length):
+        silence_data = create_silence(length, self.bit_rate)
+        self.data = np.append(self.data, silence_data)
+
 
     # Adds the audio data of a note(s) to the channel's data
-    def add_notes(self, length, notes, amps = []):
+    def add_notes(self, length, notes, amps = [], target_data : AudioData = None, thread_mode = False):
+
         frames = int(self.bit_rate * length)
+
         if type(notes) == list:
+
+            if notes[0] is None:
+                if thread_mode:
+                    target_data.set_data(create_silence(length, self.bit_rate))
+                else:
+                    self.add_silence(length)
+                return
+
 
             # Sanity check
             if len(amps) != len(notes):
@@ -142,10 +184,19 @@ class Channel:
 
             new_data = sd.mix_waveforms(osc_list= oscs, amp_list = amps)
         else:
+            if notes is None:
+                if thread_mode:
+                    target_data.set_data(create_silence(length, self.bit_rate))
+                else:
+                    self.add_silence(length)
+                return
             new_sound = self.generate_note(notes, frames)
             new_data = sd.mix_waveforms(osc_list = [new_sound], amp_list = [1])
 
-        self.data = np.append(self.data, new_data)
+        if thread_mode:
+            target_data.set_data(new_data)
+        else:
+            self.data = np.append(self.data, new_data)
 
     # Multiplies the audio data by a given number
     def multiply(self, num = 2):
@@ -157,13 +208,69 @@ class Channel:
     def get_data(self):
         return self.data
 
+    def get_sheet(self):
+        return self.sheet
+
+# Cuts to a certain point in the audio
+def cut_audio(data, bitrate, start = None, end = None):
+
+    if end:
+        end_point = int(end * bitrate)
+    else:
+        end_point = len(data)
+
+    if start:
+        start_point = int(start * bitrate)
+    else:
+        start_point = 0
+
+    data = data[start_point:end_point]
+    return data
+
+
+# Syncs sheet1 to sheet2 in terms of time (adds silence)
+def sync_to_sheet(sheet1 : NoteSheet, sheet2 : NoteSheet):
+    len1 = sheet1.get_length()
+    len2 = sheet2.get_length()
+
+    if len1 >= len2:
+        return 1
+    else:
+        diff = len2 - len1
+        sheet1.add_notes(length=diff, notes=None, amps=[1])
+
+    return sheet1
 
 
 
 
+# Applies delay on audio data
+def delay_effect(signal, delay_in_seconds, coeff, bitrate):
+
+    delay = int(delay_in_seconds * bitrate)
+
+    threshold = 0.01 # When to stop delay
+
+    times = int(math.log(threshold, coeff))
+    length = len(signal)
 
 
+    new_signal = np.zeros(length + delay * times)
+    new_signal[0:length] = signal
+    plus = 0
+    for i in range(times):
+        plus += delay
+        new_signal[plus:plus+length] = new_signal[plus:plus+length] + signal*math.pow(coeff, i)
 
+    signal = new_signal.copy()
+    return signal
+
+
+def create_silence(length, bit_rate):
+    frames = int(length * bit_rate)
+    data = np.zeros(frames)
+
+    return data
 
 # Creates a wave for modulation (AM or FM)
 def create_mod_wave(dc, base_freq, mod : Modulation, length, bit_rate):
@@ -304,3 +411,28 @@ def create_sound(sobj: SoundObject, freq, length, bit_rate, debug = False):
         plt.show()
 
     return data
+
+
+def fft_filter(signal):
+
+    W = fftfreq(signal.size, 0.0001)
+    f_signal = rfft(signal)
+
+    plt.figure()
+    plt.plot(f_signal[0:1500])
+
+    # If our original signal time was in seconds, this is now in Hz
+    cut_f_signal = f_signal.copy()
+    cut_f_signal[(W > 600)] = 0
+
+    #minimum = max[np.abs(cut_f_signal.argmin()), np.abs(cut_f_signal.argmax())]
+    maximum = np.abs(cut_f_signal).argmax()
+    print ("Max = " + str(maximum))
+
+
+ #   plt.plot(cut_f_signal[500:1000])
+    plt.show()
+
+    cut_signal = irfft(cut_f_signal)
+
+    return cut_signal
