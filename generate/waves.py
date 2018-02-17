@@ -7,7 +7,10 @@ import generate.sound as sd
 import threading
 from scipy.fftpack import rfft, irfft, fftfreq
 
-# Defines a sequence of notes with lengths and amps
+# NoteSheet class: Holds a sequence of notes with lengths and amplitudes
+#
+# This class' objects are given to a Channel objects, where they are members.
+# The Channel class will use the sheet in order to play its notes.
 class NoteSheet:
 
     def __init__(self):
@@ -31,6 +34,7 @@ class NoteSheet:
     def get_length(self):
         return self.length
 
+# Modulation class: its members hold properties of a modulation: waveform, amplitude, etc.
 class Modulation:
 
     def __init__(self, amp, mod_ratio, t = "sin", debug = False, direct_freq = False):
@@ -44,6 +48,8 @@ class Modulation:
         # If we want the modulation to be constant and not carrier wave frequency dependent. This is good for AM modulation
         self.direct_freq = direct_freq
 
+
+# SoundObject class: its members hold properties of a sound: shape, modulations, etc.
 class SoundObject:
 
     def __init__(self, t, fm = None, am = None, env = None, tri_shape = 0.3):
@@ -74,6 +80,9 @@ class SoundObject:
     def set_fm(self, fm):
         self.fm = fm
 
+
+# AudioData: This class is holding audio data.
+# It is used for threading as a "bucket" object for the thread output
 class AudioData:
 
     def __init__(self, data = []):
@@ -85,6 +94,7 @@ class AudioData:
     def get_data(self):
         return self.data
 
+# Envelope class. Objects contains parameters for envelope signal - attack, decay, and two level stages.
 class Envelope:
 
     def __init__(self, attack = 0.0, decay = 0.0, level1 = 1.0, level2 = 1.0, sustain = 0.0, debug = False):
@@ -96,59 +106,90 @@ class Envelope:
         self.debug = debug
 
 
-# Holds a SoundObject, a NoteSheet, and generates audio from them
+# Channel class.
+#
+# Main members:
+# sobj - SoundObject object that defines the channel's sound.
+# sheet - NoteSheet object for the notes that are to be played in this channel
+#
+# Main methods:
+# generate_sound - Generate audio by combining the SoundObject and the NoteSheet
+# multiply - can multiply the data if needed by an integer number
+# set_sheet - sets a new sheet
+# get_sheet - retreives the channel's sheet
+# get_data - gets channel data.
 class Channel:
-    def __init__(self, sobj : SoundObject, bit_rate, noise = False, noise_amp = 0.0):
+    def __init__(self, sobj : SoundObject, bit_rate, sheet : NoteSheet = None, noise = False, noise_amp = 0.0):
         self.sobj = sobj
         self.bit_rate = bit_rate
         self.data = np.zeros(1)
         self.noise = noise
         self.noise_amp = noise_amp
-        self.sheet = None
+        self.sheet = sheet
+        self.data_ready = False
 
     # Sets the sheet and initializes the data. Whenever this is used, all the previous data is deleted
     def set_sheet(self, sheet : NoteSheet):
+        self.data_ready = False
         self.sheet = sheet
         self.data = np.zeros(1)
 
     # Generates the audio from the sheet
     def generate_sound(self):
+
+        # Initialize data and retrieve notes
         self.data = np.zeros(1)
         note_list = self.sheet.get_notes()
+
+        # Thread pool initialization
         thread_pool = []
-        target_audio_arr = []
+        
+        # List of target AudioData objects for the threads to write to
+        target_audio_list = []
+        
         for i, note_tuple in enumerate(note_list):
+
+            # Get note info from the tuple
             length = note_tuple[0]
             notes = note_tuple[1]
             if notes is list:
                 notes = notes[0]
             amps = note_tuple[2]
+
+            # Create an empty AudioData object for the thread, and append to the list
             audio = AudioData()
-            target_audio_arr.append(audio)
-            new_thread = threading.Thread(target=self.add_notes, args=(length, notes, amps, target_audio_arr[i], True))
+            target_audio_list.append(audio)
+
+            # Create a thread and append to the pool
+            new_thread = threading.Thread(target=self.add_notes, args=(length, notes, amps, target_audio_list[i], True))
             thread_pool.append(new_thread)
+
             #self.add_notes(length, notes, amps)
 
+        # Launch and join all the threads
         for thread in thread_pool:
             thread.start()
 
         for thread in thread_pool:
             thread.join()
 
+        # Add all the generated data to the channel's data
         for i, note in enumerate(note_list):
-            self.data = np.append(self.data, target_audio_arr[i].get_data())
+            self.data = np.append(self.data, target_audio_list[i].get_data())
 
+        self.data_ready = True
 
 
     # Generates the audio for a note
-    def generate_note(self, note, frames):
+    def generate_note_audio(self, note, frames):
         new_sound = create_sound(self.sobj, music.notes.get_note(note), frames, self.bit_rate)
         if self.noise:
             noise = create_noise(frames, self.noise_amp)
             new_sound = new_sound + noise
         new_sound = sd.smooth_audio(new_sound)
 
-        return new_sound;
+        return new_sound
+
 
     def add_silence(self, length):
         silence_data = create_silence(length, self.bit_rate)
@@ -169,7 +210,6 @@ class Channel:
                     self.add_silence(length)
                 return
 
-
             # Sanity check
             if len(amps) != len(notes):
                 print("Error: must provide amp list the same size of note list!")
@@ -177,12 +217,13 @@ class Channel:
 
             oscs = []
             for note in notes:
-                new_sound = self.generate_note(note, frames)
+                new_sound = self.generate_note_audio(note, frames)
                 oscs.append(new_sound)
                 if not amps:
                     amps.append(1)
 
             new_data = sd.mix_waveforms(osc_list= oscs, amp_list = amps)
+
         else:
             if notes is None:
                 if thread_mode:
@@ -190,7 +231,7 @@ class Channel:
                 else:
                     self.add_silence(length)
                 return
-            new_sound = self.generate_note(notes, frames)
+            new_sound = self.generate_note_audio(notes, frames)
             new_data = sd.mix_waveforms(osc_list = [new_sound], amp_list = [1])
 
         if thread_mode:
@@ -200,16 +241,28 @@ class Channel:
 
     # Multiplies the audio data by a given number
     def multiply(self, num = 2):
-        new_data = self.data
-        for i in range(num - 1):
-            self.data = np.append(self.data, new_data)
+        if self.data_ready:
+            new_data = self.data
+            for i in range(num - 1):
+                self.data = np.append(self.data, new_data)
+        else:
+            print("-W- multiply: Data is not ready, will not multiply")
+            return
 
     # Returns the audio data
     def get_data(self):
-        return self.data
+        if self.data_ready:
+            return self.data
+        else:
+            print("-W- get_data: Data is not ready, returning empty data")
+            return []
 
     def get_sheet(self):
-        return self.sheet
+        if self.sheet is not None:
+            return self.sheet
+        else:
+            print("-W- get_sheet: Sheet is not defined, returning empty sheet instead")
+            return NoteSheet()
 
 # Cuts to a certain point in the audio
 def cut_audio(data, bitrate, start = None, end = None):
@@ -243,8 +296,7 @@ def sync_to_sheet(sheet1 : NoteSheet, sheet2 : NoteSheet):
 
 
 
-
-# Applies delay on audio data
+# Applies delay on an audio signal
 def delay_effect(signal, delay_in_seconds, coeff, bitrate):
 
     delay = int(delay_in_seconds * bitrate)
@@ -266,6 +318,7 @@ def delay_effect(signal, delay_in_seconds, coeff, bitrate):
     return signal
 
 
+# Generates a silence signal
 def create_silence(length, bit_rate):
     frames = int(length * bit_rate)
     data = np.zeros(frames)
@@ -295,7 +348,7 @@ def create_mod_wave(dc, base_freq, mod : Modulation, length, bit_rate):
 
     return data
 
-# Creates envelope wave
+# Creates the envelope signal, which is later used to multiply the sound signals
 def create_env_wave(env : Envelope, length, bit_rate):
 
     # Initialize values
@@ -340,18 +393,6 @@ def create_tri_wave(length, bit_rate, shape, freq = 0.0):
 
     return triangle
 
-def create_noise(length, amplitude):
-
-    mu = 0.0 #TODO: Maybe change mu to be a parameter?
-    max_sigma = 0.7
-    sigma = amplitude
-    if sigma > max_sigma:
-        sigma = max_sigma
-    data = np.random.normal(mu, sigma, length)
-
-    return data
-
-
 # Creates a sin base wave
 def create_sin_wave(f, length, bit_rate, f_carrier = 0.0):
 
@@ -370,7 +411,7 @@ def create_sin_wave(f, length, bit_rate, f_carrier = 0.0):
     return data
 
 
-# Generates a buffer for a sin wave
+# Generates a sound, considering it's different properties
 def create_sound(sobj: SoundObject, freq, length, bit_rate, debug = False):
 
     stype = sobj.type
@@ -412,7 +453,20 @@ def create_sound(sobj: SoundObject, freq, length, bit_rate, debug = False):
 
     return data
 
+# Creates a normal spread noise signal
+def create_noise(length, amplitude):
 
+    mu = 0.0 #TODO: Maybe change mu to be a parameter?
+    max_sigma = 0.7
+    sigma = amplitude
+    if sigma > max_sigma:
+        sigma = max_sigma
+    data = np.random.normal(mu, sigma, length)
+
+    return data
+
+# TODO: Improve and use this function
+# This function is not currently used
 def fft_filter(signal):
 
     W = fftfreq(signal.size, 0.0001)
