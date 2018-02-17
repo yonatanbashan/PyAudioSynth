@@ -1,13 +1,15 @@
 # PyAudioSynth
 
-This is a Python audio synthesizer by Yonatan Bashan
+This is a Python audio synthesizer by Yonatan Bashan.
+
 The synthesizer is non-interactive, i.e. it plays pre-written notes.
 
 The available sound features are:
-  Waveforms: Sine, Square, and Triangle. Triangle waveform is adjustable to be between pure triangle to sawtooth
-  Modulations: FM modulations are available to sine wave form, AM modulations to any waveform
-  Envelope: Envelope is available to all waveforms, with attack, decay, and two level stages as parameters
-  Effect: Delay and noise effects are available
+
+* Waveforms: Sine, Square, and Triangle. Triangle waveform is adjustable to be between pure triangle to sawtooth
+* Modulations: FM modulations are available to sine wave form, AM modulations to any waveform
+* Envelope: Envelope is available to all waveforms, with attack, decay, and two level stages as parameters
+* Effect: Delay and noise effects are available
 
 The general flow to create music using the synthesizer is as follows:
 
